@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SocketChat | TCP Chat Application</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: #e9edef;
+    color: #202c33;
+}
+
+button, input { font: inherit; }
+
+.login {
+    width: min(380px, 92%);
+    margin: 12vh auto;
+    background: white;
+    padding: 30px;
+    border-radius: 16px;
+    box-shadow: 0 8px 30px #0001;
+}
+
+.login h1 { color: #075e54; }
+
+.login input, .composer input {
+    width: 100%;
+    border: 1px solid #d5dadd;
+    border-radius: 9px;
+    padding: 12px;
+    outline: none;
+}
+
+button {
+    border: 0;
+    border-radius: 8px;
+    padding: 11px 16px;
+    background: #128c7e;
+    color: white;
+    cursor: pointer;
+}
+
+button:hover { background: #075e54; }
+
+.login button { width: 100%; margin-top: 12px; }
+
+#status { font-size: 13px; color: #667781; }
+
+.app {
+    display: none;
+    width: min(1150px, 100%);
+    height: min(760px, 100dvh);
+    min-height: 480px;
+    margin: 0 auto;
+    background: white;
+    box-shadow: 0 4px 25px #0001;
+}
+
+.sidebar {
+    width: 32%;
+    min-width: 220px;
+    border-right: 1px solid #e6e9eb;
+    display: flex;
+    flex-direction: column;
+}
+
+.header {
+    background: #075e54;
+    color: white;
+    padding: 18px;
+    font-weight: 600;
+}
+
+.search { padding: 12px; }
+
+.search input {
+    width: 100%;
+    padding: 10px;
+    border: 0;
+    border-radius: 8px;
+    background: #f0f2f5;
+}
+
+.user-row {
+    padding: 16px;
+    border-bottom: 1px solid #f0f2f5;
+    cursor: pointer;
+}
+
+.user-row:hover { background: #f5f7f8; }
+
+.small {
+    color: #667781;
+    font-size: 12px;
+    margin-top: 5px;
+}
+
+.chat {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-header {
+    padding: 16px;
+    border-bottom: 1px solid #e6e9eb;
+}
+
+.messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 22px;
+    background-color: #efeae2;
+    background-image: radial-gradient(#d6d0c7 0.6px, transparent 0.6px);
+    background-size: 16px 16px;
+}
+
+.message {
+    max-width: 78%;
+    width: fit-content;
+    padding: 10px 13px;
+    margin: 8px 0;
+    border-radius: 10px;
+    background: white;
+    box-shadow: 0 1px 1px #0001;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.message.mine {
+    margin-left: auto;
+    background: #d9fdd3;
+}
+
+.message.system {
+    margin: 12px auto;
+    background: #fff6d5;
+    text-align: center;
+    font-size: 12px;
+}
+
+.sender {
+    font-size: 12px;
+    font-weight: 700;
+    color: #128c7e;
+    margin-bottom: 4px;
+}
+
+.composer {
+    display: flex;
+    gap: 10px;
+    padding: 12px;
+    background: #f0f2f5;
+}
+
+.composer input { flex: 1; min-width: 0; }
+
+@media (max-width: 600px) {
+    .app { height: 100dvh; }
+    .sidebar { width: 100px; min-width: 100px; }
+    .user-row { padding: 12px 5px; font-size: 12px; }
+    .search { padding: 5px; }
+    .header { padding: 15px 5px; font-size: 13px; }
+    .messages { padding: 10px; }
+}
+</style>
+</head>
+
+<body>
+
+<div class="login" id="login">
+    <h1>💬 SocketChat</h1>
+    <p>Real-Time Multi-User Chat Application</p>
+
+    <label for="username">Enter your username</label>
+    <input id="username" maxlength="30"
+           placeholder="Example: Alice"
+           autocomplete="username">
+
+    <button id="connectBtn">Connect to Chat</button>
+    <p id="status">TCP server must be running first.</p>
+</div>
+
+<div class="app" id="app">
+    <aside class="sidebar">
+        <div class="header">💬 SocketChat</div>
+
+        <div class="search">
+            <input id="search" placeholder="Search online users">
+        </div>
+
+        <div id="userList"></div>
+    </aside>
+
+    <main class="chat">
+        <div class="chat-header">
+            <strong id="chatTitle">Group Chat</strong>
+            <div class="small" id="connectionStatus">Connecting...</div>
+        </div>
+
+        <div class="messages" id="messages"></div>
+
+        <form class="composer" id="messageForm">
+            <input id="messageInput"
+                   maxlength="2000"
+                   placeholder="Type a message..."
+                   autocomplete="off">
+            <button type="submit">Send ➤</button>
+        </form>
+    </main>
+</div>
+
+<script>
+const login = document.getElementById("login");
+const app = document.getElementById("app");
+const usernameInput = document.getElementById("username");
+const statusText = document.getElementById("status");
+const connectBtn = document.getElementById("connectBtn");
+const messages = document.getElementById("messages");
+const messageInput = document.getElementById("messageInput");
+const userList = document.getElementById("userList");
+const search = document.getElementById("search");
+
+let ws = null;
+let username = "";
+const knownUsers = new Set();
+
+function addMessage(text, type = "message", mine = false) {
+    const item = document.createElement("div");
+    item.className = "message" +
+        (type === "status" ? " system" : "") +
+        (mine ? " mine" : "");
+
+    if (type === "message" && !mine) {
+        const colon = text.indexOf(":");
+
+        if (colon > 0) {
+            const sender = document.createElement("div");
+            sender.className = "sender";
+            sender.textContent = text.slice(0, colon);
+            item.appendChild(sender);
+
+            text = text.slice(colon + 1).trim();
+        }
+    }
+
+    const body = document.createElement("div");
+    body.textContent = text;
+    item.appendChild(body);
+
+    messages.appendChild(item);
+    messages.scrollTop = messages.scrollHeight;
+}
+
+function renderUsers() {
+    userList.replaceChildren();
+
+    const query = search.value.toLowerCase();
+
+    const users = [...knownUsers]
+    .filter(name =>
+        name.toLowerCase() !== "system" &&
+        name.toLowerCase().includes(query)
+    );
+
+    users.forEach(name => {
+        const row = document.createElement("div");
+        row.className = "user-row";
+
+        const title = document.createElement("strong");
+        title.textContent = "👤 " + name;
+
+        const detail = document.createElement("div");
+        detail.className = "small";
+        detail.textContent = "Online";
+
+        row.append(title, detail);
+
+        row.addEventListener("click", () => {
+            document.getElementById("chatTitle").textContent = name;
+            addMessage(
+                "This prototype broadcasts messages to all connected users. " +
+                "Private conversations will require recipient routing.",
+                "status"
+            );
+        });
+
+        userList.appendChild(row);
+    });
+}
+
+connectBtn.addEventListener("click", () => {
+    username = usernameInput.value.trim();
+
+    if (!username) {
+        statusText.textContent = "Please enter a username.";
+        return;
+    }
+
+    if (/\s/.test(username)) {
+        statusText.textContent =
+            "Use a username without spaces for this prototype.";
+        return;
+    }
+
+    connectBtn.disabled = true;
+    statusText.textContent = "Connecting to chat server...";
+
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(
+        `${protocol}//${location.host}/ws?username=${encodeURIComponent(username)}`
+    );
+
+    ws.onopen = () => {
+        login.style.display = "none";
+        app.style.display = "flex";
+
+        document.getElementById("connectionStatus").textContent =
+            "Connected as " + username;
+
+        knownUsers.add(username);
+        renderUsers();
+        messageInput.focus();
+    };
+
+    ws.onmessage = event => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "status") {
+            addMessage(data.text, "status");
+            return;
+        }
+
+        if (data.type === "message") {
+            const text = data.text;
+            const match = text.match(/^([^:]+):/);
+
+            if (match && match[1] !== username) {
+                knownUsers.add(match[1]);
+                renderUsers();
+            }
+
+            addMessage(text);
+        }
+    };
+
+    ws.onerror = () => {
+        statusText.textContent =
+            "Connection failed. Check the TCP server and gateway.";
+    };
+
+    ws.onclose = () => {
+        document.getElementById("connectionStatus").textContent =
+            "Disconnected from server";
+        connectBtn.disabled = false;
+    };
+});
+
+document.getElementById("messageForm").addEventListener("submit", event => {
+    event.preventDefault();
+
+    const text = messageInput.value.trim();
+
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+    ws.send(JSON.stringify({
+        type: "message",
+        text: text
+    }));
+
+    addMessage(text, "message", true);
+    messageInput.value = "";
+    messageInput.focus();
+});
+
+search.addEventListener("input", renderUsers);
+
+usernameInput.addEventListener("keydown", event => {
+    if (event.key === "Enter") connectBtn.click();
+});
+</script>
+
+</body>
+</html>
